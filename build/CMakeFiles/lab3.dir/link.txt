@@ -1,1 +1,0 @@
-/usr/bin/cc -O2 -Wall -Wextra -Wl,--dependency-file=CMakeFiles/lab3.dir/link.d CMakeFiles/lab3.dir/src/main.c.o -o lab3

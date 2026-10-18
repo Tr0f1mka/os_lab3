@@ -115,7 +115,7 @@ void print_matrix(int **mat, int r, int c, const char *name) {
 
 int main(int argc, char *argv[]) {
     if (argc < 6) {
-        fprintf(stderr, "Использование: %s <rows> <cols> <window_size> <K> <max_threads>\n", argv[0]);
+        fprintf(stderr, "Неправильные аргументы\n");
         return 1;
     }
 
@@ -138,7 +138,7 @@ int main(int argc, char *argv[]) {
     input_matrix = alloc_matrix(rows, cols);
     output_matrix = alloc_matrix(rows, cols);
     fill_random(input_matrix, rows, cols);
-    // print_matrix(input_matrix, rows, cols, "Исходная матрица");
+    print_matrix(input_matrix, rows, cols, "Исходная матрица");
 
     sem_init(&thread_semaphore, 0, max_threads);
 
@@ -182,7 +182,7 @@ int main(int argc, char *argv[]) {
 	double t_end = now_sec();
 	printf("%.6f\n", t_end - t_start);
 
-    // print_matrix(src, rows, cols, "Результат после K итераций");
+    print_matrix(src, rows, cols, "Результат после K итераций");
 
     sem_destroy(&thread_semaphore);
     free_matrix(input_matrix, rows);
