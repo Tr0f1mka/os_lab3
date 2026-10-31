@@ -28,7 +28,7 @@ typedef struct {
 } ThreadArg;
 
 
-static double now_sec(void) {
+static double now_sec() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
@@ -45,6 +45,10 @@ int compute_median(int **mat, int r, int c, int w) {
     int half = w / 2;
     int count = w * w;
     int *window = (int*)malloc(count * sizeof(int));
+	if (window == NULL) {
+		perror("malloc");
+		return 0;
+	}
     int idx = 0;
 
     for (int i = -half; i <= half; i++) {
@@ -67,6 +71,10 @@ int compute_median(int **mat, int r, int c, int w) {
 
 // Функция потока: обрабатывает назначенные строки
 void *worker(void *arg) {
+	if (arg == NULL) {
+		sem_post(&thread_semaphore);
+		return NULL;
+	}
     ThreadArg *targ = (ThreadArg*)arg;
 
     for (int r = targ->start_row; r < targ->end_row; r++) {
@@ -84,8 +92,18 @@ void *worker(void *arg) {
 // Выделение матрицы
 int **alloc_matrix(int r, int c) {
     int **mat = (int**)malloc(r * sizeof(int*));
-    for (int i = 0; i < r; i++) {
+    if (mat == NULL) {
+		perror("malloc");
+		return NULL;
+	}
+	for (int i = 0; i < r; i++) {
         mat[i] = (int*)malloc(c * sizeof(int));
+		if (mat[i] == NULL) {
+			perror("malloc");
+			for (int j = 0; j < i; j++) free(mat[j]);
+			free(mat);
+			return NULL;
+		}
     }
     return mat;
 }
@@ -98,13 +116,22 @@ void free_matrix(int **mat, int r) {
 
 // Заполнение матрицы случайными числами
 void fill_random(int **mat, int r, int c) {
-    for (int i = 0; i < r; i++)
-        for (int j = 0; j < c; j++)
+	if (mat == NULL) {
+		return;
+	}
+    for (int i = 0; i < r; i++) {
+		for (int j = 0; j < c; j++) {
             mat[i][j] = rand() % 100;
+		}
+	}
 }
 
 // Вывод матрицы
 void print_matrix(int **mat, int r, int c, const char *name) {
+	if (mat == NULL) {
+		printf("Пустая матрица\n");
+		return;
+	}
     printf("%s:\n", name);
     for (int i = 0; i < r; i++) {
         for (int j = 0; j < c; j++) printf("%4d ", mat[i][j]);
@@ -125,8 +152,8 @@ int main(int argc, char *argv[]) {
     K = atoi(argv[4]);
     max_threads = atoi(argv[5]);
 
-    if (window_size % 2 == 0) {
-        fprintf(stderr, "Размер окна должен быть нечётным.\n");
+    if (window_size % 2 == 0 || window_size < 1) {
+        fprintf(stderr, "Размер окна должен быть нечётным и больше нуля\n");
         return 1;
     }
     if (max_threads < 1) max_threads = 1;
@@ -135,10 +162,18 @@ int main(int argc, char *argv[]) {
            rows, cols, window_size, K, max_threads);
 
     srand(time(NULL));
-    input_matrix = alloc_matrix(rows, cols);
+	double t_global_start = now_sec();
+	
+	input_matrix = alloc_matrix(rows, cols);
+	if (input_matrix == NULL) {
+		return 1;
+	}
     output_matrix = alloc_matrix(rows, cols);
+	if (output_matrix == NULL) {
+		return 1;
+	}
     fill_random(input_matrix, rows, cols);
-    print_matrix(input_matrix, rows, cols, "Исходная матрица");
+    // print_matrix(input_matrix, rows, cols, "Исходная матрица");
 
     sem_init(&thread_semaphore, 0, max_threads);
 
@@ -151,11 +186,25 @@ int main(int argc, char *argv[]) {
         int total_threads = (rows < max_threads) ? rows : max_threads;
         int rows_per_thread = (rows + total_threads - 1) / total_threads;
         pthread_t *threads = (pthread_t*)malloc(total_threads * sizeof(pthread_t));
+		if (threads == NULL) {
+			perror("malloc");
+			break;
+		}
 
         for (int t = 0; t < total_threads; t++) {
             sem_wait(&thread_semaphore);
 
             ThreadArg *arg = (ThreadArg*)malloc(sizeof(ThreadArg));
+			if (arg == NULL) {
+				for (int t = 0; t < total_threads; t++) {
+					pthread_join(threads[t], NULL);
+				}
+				free(threads);
+				sem_destroy(&thread_semaphore);
+				free_matrix(input_matrix, rows);
+				free_matrix(output_matrix, rows);
+				return 1;
+			}
             arg->thread_id = t;
             arg->start_row = t * rows_per_thread;
             arg->end_row = (t + 1) * rows_per_thread;
@@ -164,8 +213,16 @@ int main(int argc, char *argv[]) {
             arg->dst = dst;
 
             if (pthread_create(&threads[t], NULL, worker, arg) != 0) {
+				for (int k = 0; k < total_threads; k++) {
+					pthread_join(threads[k], NULL);
+				}
+				free(threads);
+				free_matrix(input_matrix, rows);
+				free_matrix(output_matrix, rows);
+				free(arg);
+				sem_destroy(&thread_semaphore);
                 perror("pthread_create");
-                sem_post(&thread_semaphore);
+				return 1;
             }
         }
 
@@ -180,13 +237,16 @@ int main(int argc, char *argv[]) {
     }
 
 	double t_end = now_sec();
-	printf("%.6f\n", t_end - t_start);
 
-    print_matrix(src, rows, cols, "Результат после K итераций");
-
+    // print_matrix(src, rows, cols, "Результат после K итераций");
     sem_destroy(&thread_semaphore);
     free_matrix(input_matrix, rows);
     free_matrix(output_matrix, rows);
 
+	double t_global_end = now_sec();
+
+	printf("Потрачено времени: %.6f\n", t_end - t_start);
+	printf("Потрачено всего времени: %.6f\n", t_global_end - t_global_start);
+	
     return 0;
 }
